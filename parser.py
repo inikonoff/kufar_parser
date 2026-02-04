@@ -6,8 +6,8 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Базовый URL внутреннего API kufar.by
-KUFAR_API_URL = "https://api.kufar.by/search/ads"
+# Реальный API эндпоинт kufar.by
+KUFAR_API_URL = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
 
 # Заголовки — имитируем обычный браузер
 HEADERS = {
@@ -26,15 +26,16 @@ async def fetch_ads(category_id: int = None) -> List[Dict[str, Any]]:
     """
     Тянет список объявлений с kufar.by для указанной категории.
     Возвращает список словарей с полями:
-        id, title, price, url, created_at
+        id, title, price, url
     """
     if category_id is None:
         category_id = config.KUFAR_CATEGORY_ID
 
     params = {
-        "limit": 50,
-        "category": category_id,
-        "sort": "newest",
+        "cat": category_id,
+        "lang": "ru",
+        "size": 50,
+        "sort": "lst.d",  # lst.d = сортировка по дате, новые первыми
     }
 
     try:
@@ -45,6 +46,7 @@ async def fetch_ads(category_id: int = None) -> List[Dict[str, Any]]:
                     return []
 
                 data = await resp.json(content_type=None)
+                logger.debug(f"Получен ответ от Kufar: {len(data.get('ads', []))} объявлений")
                 return _parse_response(data)
 
     except aiohttp.ClientError as e:
@@ -61,16 +63,16 @@ def _parse_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     Структура ответа может измениться — тут основная точка адаптации.
     """
     ads = []
-    items = data.get("data", {}).get("ads", [])
+    items = data.get("ads", [])
 
     for item in items:
-        ad_id = item.get("id")
+        ad_id = item.get("ad_id")
         if not ad_id:
             continue
 
-        title = item.get("title", "Без названия")
-        price = _format_price(item.get("price"))
-        url = f"https://www.kufar.by/a/{ad_id}"
+        title = item.get("subject", "Без названия")
+        price = _format_price(item.get("price_byn"), item.get("price_usd"))
+        url = f"https://www.kufar.by/item/{ad_id}"
 
         ads.append({
             "id": ad_id,
@@ -82,18 +84,12 @@ def _parse_response(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ads
 
 
-def _format_price(price_data) -> str:
+def _format_price(price_byn, price_usd) -> str:
     """Форматирует цену в читаемую строку."""
-    if price_data is None:
-        return "Цена не указана"
-
-    if isinstance(price_data, (int, float)):
-        return f"{price_data:,.0f} Br".replace(",", " ")
-
-    if isinstance(price_data, dict):
-        amount = price_data.get("amount")
-        currency = price_data.get("currency", "Br")
-        if amount:
-            return f"{float(amount):,.0f} {currency}".replace(",", " ")
-
-    return str(price_data)
+    if price_byn and price_byn != "0":
+        return f"{float(price_byn):,.0f} Br".replace(",", " ")
+    
+    if price_usd and price_usd != "0":
+        return f"{float(price_usd):,.0f} $".replace(",", " ")
+    
+    return "Цена не указана"
