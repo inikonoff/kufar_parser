@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import random
+import os
 
+from aiohttp import web
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 import config
@@ -18,6 +20,28 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+# ─── HTTP-сервер для health checks (Render + UptimeRobot) ──────────────────
+
+async def health_check(request):
+    """Отвечает OK на все запросы — для Render и UptimeRobot."""
+    return web.Response(text="OK", status=200)
+
+
+async def start_http_server():
+    """Запускает минимальный HTTP-сервер на порту из env."""
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+    
+    port = int(os.getenv("PORT", "8080"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"HTTP-сервер запущен на порту {port}")
+    return runner
 
 
 # ─── Цикл сканирования ──────────────────────────────────────────────────────
@@ -68,6 +92,9 @@ async def main():
     # Регистрируем обработчики
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
+
+    # Стартуем HTTP-сервер для health checks
+    http_runner = await start_http_server()
 
     # Стартуем цикл сканирования в фоне
     async with app:
